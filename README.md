@@ -1337,12 +1337,4 @@ The project is ideal for:
 
 ## Happy Coding! 🎉
 
-Feel free to use this project repository and extend this project further!
-
-If you have any questions or want to share your work, reach out via GitHub or my portfolio at [https://www.arnobmahmud.com/](https://www.arnobmahmud.com)/.
-
-**Enjoy building and learning!** 🚀
-
-Thank you! 😊
-
 ---
