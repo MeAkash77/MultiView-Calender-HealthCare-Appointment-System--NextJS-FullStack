@@ -1,0 +1,77 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+.npm-cache
+
+# Playwright MCP artifacts
+.playwright-mcp/
+
+.env
+.env.local
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+.next
+
+
+# Cursor
+.cursorignore
+.cursor
+
+# Claude
+.claude
+.claudeignore
+CLAUDE.md
+
+# Documentation
+HETZNER_VPS_MIGRATION_GUIDE.md
+AI_MODEL_IMPLEMENTATION_GUIDE.md
+AUTH_UI_IMPLEMENTATION_GUIDE.md
+DROPDOWN_TEST_CREDENTIALS_DOCS.md
+UI_STYLING_GUIDE.md
+PROJECT_PLAN.md
+/src/generated/prisma
+Implementation_plan.md
+Task.md
+
+
+
+# OS
+.DS_Store
+.github
+.npm-cache
+
+# Agile V
+

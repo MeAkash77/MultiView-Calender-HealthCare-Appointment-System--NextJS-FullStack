@@ -1,0 +1,85 @@
+/**
+ * Categories API Route Handler (Prisma)
+ * GET: List all categories | POST: Create a category
+ */
+
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { getSessionUser } from "@/lib/session";
+import { serializeCategory } from "@/lib/serializers";
+import { categoryDetailInclude } from "@/lib/category-api-include";
+import { redis } from "@/lib/redis";
+import { getUserRole, isPatientRole } from "@/lib/rbac";
+
+/** Per-request API handler (see api-route-dynamic.test.ts). */
+export const dynamic = "force-dynamic";
+
+export async function GET() {
+  try {
+    const sessionUser = await getSessionUser();
+    if (!sessionUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const categories = await prisma.category.findMany({
+      orderBy: { created_at: "desc" },
+    });
+
+    return NextResponse.json({
+      categories: categories.map(serializeCategory),
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    console.error("Error fetching categories:", error);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const sessionUser = await getSessionUser();
+    if (!sessionUser) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Patients may not create appointment categories (staff-only operation).
+    const role = await getUserRole(sessionUser.userId);
+    if (isPatientRole(role)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    const body = await req.json();
+    if (!body.label || typeof body.label !== "string" || body.label.trim() === "") {
+      return NextResponse.json({ error: "label is required" }, { status: 400 });
+    }
+
+    const category = await prisma.category.create({
+      data: {
+        label: body.label.trim(),
+        description: body.description ?? null,
+        color: body.color ?? null,
+        icon: body.icon ?? null,
+        is_active: body.is_active !== undefined ? Boolean(body.is_active) : true,
+        sort_order: body.sort_order !== undefined ? Number(body.sort_order) : 0,
+        duration_minutes_default:
+          body.duration_minutes_default !== undefined ? Number(body.duration_minutes_default) : null,
+        created_by_id: sessionUser.userId,
+        updated_by_id: sessionUser.userId,
+      },
+      include: categoryDetailInclude,
+    });
+
+    /*
+     * Bust the server-side Redis overview cache so the new category
+     * is counted in the dashboard "Total Categories" card immediately.
+     */
+    void redis.invalidateDashboardOverview(sessionUser.userId);
+
+    return NextResponse.json({
+      category: serializeCategory(category),
+    });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Internal server error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

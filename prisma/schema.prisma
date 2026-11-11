@@ -1,0 +1,470 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                                 String                        @id @db.Uuid
+  email                              String
+  role                               String?
+  display_name                       String?
+  created_at                         DateTime                      @default(now())
+  password_hash                      String?
+  email_verified                     Boolean                       @default(false)
+  email_verification_token           String?                       @db.Uuid
+  password_reset_token               String?                       @db.Uuid
+  password_reset_expires             DateTime?                     @db.Timestamptz(6)
+  image                              String?
+  /// Contact phone number (staff/doctor)
+  phone                              String?
+  /// Medical license or registration number (doctors)
+  license_number                     String?
+  /// Department or unit within the clinic/hospital
+  department                         String?
+  /// Consultation fee in cents (used for Services page pricing display)
+  consultation_fee                   Int?
+  /// Physical office or room location string
+  office_location                    String?
+  /// Languages the doctor can consult in (e.g. ["English", "French"])
+  languages_spoken                   String[]                      @default([])
+  /// Years of clinical practice experience
+  years_of_experience                Int?
+  active_since                       DateTime?                     @db.Timestamptz(6)
+  /// Short biography / intro paragraph for the doctor services page
+  bio                                String?
+  created_by_id                      String?                       @map("created_by") @db.Uuid
+  /// When false, doctor is hidden from new appointment booking selects (still visible in lists).
+  is_active                          Boolean                       @default(true)
+  /// Medical specialty for doctors — e.g. "Cardiology", "Pediatrics"
+  specialty                          String?
+  updated_at                         DateTime?                     @updatedAt @db.Timestamptz(6)
+  updated_by_id                      String?                       @map("updated_by") @db.Uuid
+  activities                         activities[]
+  appointment_assignees_invited_by   AppointmentAssignee[]         @relation("AssigneeInvitedBy")
+  appointment_assignees              AppointmentAssignee[]         @relation("AssigneeUser")
+  appointment_types_owned            AppointmentType[]             @relation("AppointmentTypeUser")
+  appointments_cancelled             Appointment[]                 @relation("AppointmentCancelledBy")
+  appointments_created               Appointment[]                 @relation("AppointmentCreatedBy")
+  appointments_as_treating_physician Appointment[]                 @relation("AppointmentTreatingPhysician")
+  appointments_updated               Appointment[]                 @relation("AppointmentUpdatedBy")
+  appointments_owned                 Appointment[]                 @relation("AppointmentOwner")
+  categories_created                 Category[]                    @relation("CategoryCreatedBy")
+  categories_updated                 Category[]                    @relation("CategoryUpdatedBy")
+  dashboard_access_invited_by        DashboardAccess[]             @relation("DashboardInvitedBy")
+  dashboard_access_invited           DashboardAccess[]             @relation("DashboardInvitedUser")
+  dashboard_access_owned             DashboardAccess[]             @relation("DashboardOwner")
+  doctor_type_configs                DoctorAppointmentTypeConfig[] @relation("DoctorTypeConfigUser")
+  doctor_availabilities              DoctorAvailability[]          @relation("DoctorAvailabilityUser")
+  doctor_time_offs                   DoctorTimeOff[]               @relation("DoctorTimeOffUser")
+  google_calendar_token              GoogleCalendarToken?          @relation("UserGoogleCalendar")
+  invoices_created                   Invoice[]                     @relation("InvoiceCreatedBy")
+  invoices_updated                   Invoice[]                     @relation("InvoiceUpdatedBy")
+  notifications                      Notification[]                @relation("UserNotifications")
+  organizations_created              Organization[]                @relation("OrganizationCreatedBy")
+  organizations_updated              Organization[]                @relation("OrganizationUpdatedBy")
+  patients_created                   Patient[]                     @relation("PatientCreatedBy")
+  patients_primary_doctor            Patient[]                     @relation("PatientPrimaryDoctor")
+  patients_updated                   Patient[]                     @relation("PatientUpdatedBy")
+  created_by                         User?                         @relation("UserCreatedBy", fields: [created_by_id], references: [id])
+  users_created                      User[]                        @relation("UserCreatedBy")
+  updated_by                         User?                         @relation("UserUpdatedBy", fields: [updated_by_id], references: [id])
+  users_updated                      User[]                        @relation("UserUpdatedBy")
+
+  @@index([email], map: "idx_users_email")
+  @@index([email_verification_token], map: "idx_users_email_verification_token")
+  @@index([password_reset_token], map: "idx_users_password_reset_token")
+  @@map("users")
+}
+
+model Patient {
+  id                 String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at         DateTime      @default(now())
+  firstname          String
+  lastname           String
+  birth_date         DateTime?     @db.Date
+  care_level         Int?
+  pronoun            String?
+  email              String?
+  active             Boolean       @default(true)
+  active_since       DateTime?     @db.Timestamptz(6)
+  /// ABO/Rh blood type — e.g. "A+", "O-", "AB+"
+  blood_type         String?
+  /// Height in centimetres
+  height_cm          Int?
+  /// Body weight in kilograms (up to 999.99 kg)
+  weight_kg          Decimal?      @db.Decimal(5, 2)
+  /// Insurance provider name (e.g. "AXA", "Allianz")
+  insurance_provider String?
+  /// Insurance membership / policy ID
+  insurance_id       String?
+  /// Patient's preferred language for consultations
+  preferred_language String?
+  /// National ID or passport number (PII — handle with care)
+  national_id        String?
+  /// Patient's occupation or profession
+  occupation         String?
+  /// Flexible demo/clinical fields (allergies, meds, notes) — merged on PUT, not replaced blindly.
+  clinical_profile   Json?
+  created_by_id      String?       @map("created_by") @db.Uuid
+  /// E.164 or local format — reminder SMS when no linked user.phone
+  phone              String?
+  primary_doctor_id  String?       @map("primary_doctor") @db.Uuid
+  updated_at         DateTime      @default(now()) @updatedAt
+  updated_by_id      String?       @map("updated_by") @db.Uuid
+  appointments       Appointment[]
+  created_by         User?         @relation("PatientCreatedBy", fields: [created_by_id], references: [id])
+  primary_doctor     User?         @relation("PatientPrimaryDoctor", fields: [primary_doctor_id], references: [id])
+  updated_by         User?         @relation("PatientUpdatedBy", fields: [updated_by_id], references: [id])
+
+  @@map("patients")
+}
+
+model Category {
+  id                       String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at               DateTime      @default(now())
+  updated_at               DateTime?     @db.Timestamptz(6)
+  label                    String
+  description              String?
+  color                    String?
+  icon                     String?
+  created_by_id            String?       @map("created_by") @db.Uuid
+  /// Default appointment duration in minutes for this service type
+  duration_minutes_default Int?
+  /// Whether this category is shown as an active service offering
+  is_active                Boolean       @default(true)
+  /// Controls display order in listings (lower = shown first)
+  sort_order               Int           @default(0)
+  updated_by_id            String?       @map("updated_by") @db.Uuid
+  appointments             Appointment[]
+  created_by               User?         @relation("CategoryCreatedBy", fields: [created_by_id], references: [id])
+  updated_by               User?         @relation("CategoryUpdatedBy", fields: [updated_by_id], references: [id])
+
+  @@map("categories")
+}
+
+model Appointment {
+  id                       String                @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at               DateTime              @default(now())
+  updated_at               DateTime?             @db.Timestamptz(6)
+  start                    DateTime              @db.Timestamptz(6)
+  end                      DateTime              @db.Timestamptz(6)
+  location                 String?
+  patient_id               String?               @map("patient") @db.Uuid
+  category_id              String?               @map("category") @db.Uuid
+  notes                    String?
+  title                    String
+  status                   String?
+  /// Calendar owner — maps to DB column `user_id` (B3: Prisma name `owner_id` only; no migration).
+  owner_id                 String                @map("user_id") @db.Uuid
+  /// FK to appointment_types — drives duration, slot math, and telehealth flag
+  appointment_type_id      String?               @db.Uuid
+  /// File / blob URLs (text[]). DB column remains `attachements` until an explicit `ALTER TABLE … RENAME COLUMN` migration; Prisma + app use correct spelling `attachments`.
+  attachments              String[]              @default([]) @map("attachements")
+  /// When status was set to cancelled — audit + reporting.
+  cancelled_at             DateTime?             @db.Timestamptz(6)
+  cancelled_by_id          String?               @db.Uuid
+  /// Reason / presenting complaint from the patient (visible in dialog and appointment card)
+  chief_complaint          String?
+  created_by_id            String?               @map("created_by") @db.Uuid
+  /// Actual appointment duration in minutes (may differ from appointment type default)
+  duration_minutes         Int?
+  /// Google Calendar event id after push — enables upsert on update instead of duplicate inserts.
+  google_calendar_event_id String?
+  /// Denormalised from appointment_type.is_telehealth — stored for fast filtering without a join
+  is_telehealth            Boolean               @default(false)
+  /// Set by reminder cron after 24h-before email/SMS batch — cleared when start changes.
+  reminder_sent_at         DateTime?             @db.Timestamptz(6)
+  /// Video / telehealth meeting URL — shown as "Join Call" button when is_telehealth = true
+  telehealth_link          String?
+  /// B2: optional treating / referring physician; display rule: `treating_physician_id ?? owner_id` (see `appointment-display-doctor.ts`).
+  treating_physician_id    String?               @db.Uuid
+  updated_by_id            String?               @map("updated_by") @db.Uuid
+  activities               activities[]
+  assignees                AppointmentAssignee[]
+  appointment_type         AppointmentType?      @relation("AppointmentTypeAppointments", fields: [appointment_type_id], references: [id])
+  cancelled_by             User?                 @relation("AppointmentCancelledBy", fields: [cancelled_by_id], references: [id])
+  category                 Category?             @relation(fields: [category_id], references: [id])
+  created_by               User?                 @relation("AppointmentCreatedBy", fields: [created_by_id], references: [id])
+  patient                  Patient?              @relation(fields: [patient_id], references: [id])
+  treating_physician       User?                 @relation("AppointmentTreatingPhysician", fields: [treating_physician_id], references: [id])
+  updated_by               User?                 @relation("AppointmentUpdatedBy", fields: [updated_by_id], references: [id])
+  owner                    User                  @relation("AppointmentOwner", fields: [owner_id], references: [id], onDelete: Cascade)
+  invoices                 Invoice[]
+
+  @@index([treating_physician_id])
+  @@index([appointment_type_id])
+  @@index([end], map: "idx_appointments_end")
+  @@index([start], map: "idx_appointments_start")
+  @@index([owner_id], map: "idx_appointments_user_id")
+  @@index([owner_id, start], map: "idx_appointments_user_start")
+  @@index([owner_id, start, end], map: "idx_appointments_user_start_end")
+  @@map("appointments")
+}
+
+model AppointmentAssignee {
+  id               String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at       DateTime    @default(now())
+  appointment_id   String      @map("appointment") @db.Uuid
+  user_id          String?     @map("user") @db.Uuid
+  user_type        String?
+  invited_email    String?
+  status           String?
+  invitation_token String?     @unique @db.Uuid
+  permission       String?
+  invited_by_id    String?     @map("invited_by") @db.Uuid
+  appointment      Appointment @relation(fields: [appointment_id], references: [id], onDelete: Cascade)
+  invited_by       User?       @relation("AssigneeInvitedBy", fields: [invited_by_id], references: [id])
+  user             User?       @relation("AssigneeUser", fields: [user_id], references: [id])
+
+  @@index([appointment_id], map: "idx_appointment_assignee_appointment")
+  @@index([invitation_token], map: "idx_appointment_assignee_token")
+  @@index([user_id], map: "idx_appointment_assignee_user")
+  @@index([user_id, status], map: "idx_appointment_assignee_user_status")
+  @@map("appointment_assignee")
+}
+
+model DoctorAvailability {
+  id        String @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id   String @db.Uuid
+  weekday   Int
+  start_min Int
+  end_min   Int
+  timezone  String
+  user      User   @relation("DoctorAvailabilityUser", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, weekday])
+  @@index([user_id, weekday], map: "idx_doctor_availability_user_weekday")
+  @@map("doctor_availability")
+}
+
+model DoctorTimeOff {
+  id        String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id   String   @db.Uuid
+  starts_at DateTime @db.Timestamptz(6)
+  ends_at   DateTime @db.Timestamptz(6)
+  reason    String?
+  user      User     @relation("DoctorTimeOffUser", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, starts_at])
+  @@index([user_id, starts_at], map: "idx_doctor_time_off_user_starts_at")
+  @@map("doctor_time_off")
+}
+
+model AppointmentType {
+  id                     String                        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at             DateTime                      @default(now())
+  user_id                String?                       @db.Uuid
+  name                   String
+  /// Short description shown on the services page
+  description            String?
+  duration_minutes       Int
+  buffer_before_minutes  Int                           @default(0)
+  buffer_after_minutes   Int                           @default(0)
+  slot_interval_minutes  Int                           @default(30)
+  minimum_notice_minutes Int                           @default(60)
+  /// When true: appointment is conducted via video call — shows telehealth badge and Join Call button
+  is_telehealth          Boolean                       @default(false)
+  /// Hex color used to tint appointment type chips in the calendar UI (e.g. "#4F46E5")
+  color                  String?
+  /// Lucide icon name displayed alongside the appointment type label
+  icon                   String?
+  /// Soft-delete flag — inactive types are hidden from booking but preserved in historical appointments
+  is_active              Boolean                       @default(true)
+  /// Visit fee in cents — used as the invoice amount when auto-draft fires on appointment completion.
+  /// Falls back to the treating doctor's consultation_fee when 0.
+  price_cents            Int                           @default(0)
+  user                   User?                         @relation("AppointmentTypeUser", fields: [user_id], references: [id], onDelete: Cascade)
+  appointments           Appointment[]                 @relation("AppointmentTypeAppointments")
+  doctor_configs         DoctorAppointmentTypeConfig[] @relation("DoctorTypeConfigAppointmentType")
+
+  @@index([user_id])
+  @@map("appointment_types")
+}
+
+model DoctorAppointmentTypeConfig {
+  id                  String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  doctor_id           String          @db.Uuid
+  appointment_type_id String          @db.Uuid
+  /// false = doctor has opted out of this global appointment type
+  is_enabled          Boolean         @default(true)
+  created_at          DateTime        @default(now())
+  appointment_type    AppointmentType @relation("DoctorTypeConfigAppointmentType", fields: [appointment_type_id], references: [id], onDelete: Cascade)
+  doctor              User            @relation("DoctorTypeConfigUser", fields: [doctor_id], references: [id], onDelete: Cascade)
+
+  @@unique([doctor_id, appointment_type_id])
+  @@index([doctor_id])
+  @@index([doctor_id], map: "doctor_apt_type_configs_doctor_idx")
+  @@map("doctor_appointment_type_configs")
+}
+
+model DashboardAccess {
+  id               String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at       DateTime @default(now())
+  owner_user_id    String   @db.Uuid
+  invited_user_id  String?  @db.Uuid
+  invited_email    String?
+  status           String?
+  invitation_token String?  @unique @db.Uuid
+  permission       String?
+  invited_by_id    String?  @map("invited_by") @db.Uuid
+  invited_by       User?    @relation("DashboardInvitedBy", fields: [invited_by_id], references: [id])
+  invited_user     User?    @relation("DashboardInvitedUser", fields: [invited_user_id], references: [id])
+  owner_user       User     @relation("DashboardOwner", fields: [owner_user_id], references: [id], onDelete: Cascade)
+
+  @@index([invited_user_id], map: "idx_dashboard_access_invited")
+  @@index([owner_user_id], map: "idx_dashboard_access_owner")
+  @@index([invitation_token], map: "idx_dashboard_access_token")
+  @@index([invited_user_id, status], map: "idx_dashboard_access_user_status")
+  @@map("dashboard_access")
+}
+
+model Notification {
+  id         String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at DateTime @default(now())
+  user_id    String   @db.Uuid
+  title      String
+  message    String
+  type       String
+  read       Boolean  @default(false)
+  link       String?
+  user       User     @relation("UserNotifications", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, read])
+  @@index([user_id, created_at])
+  @@map("notifications")
+}
+
+model GoogleCalendarToken {
+  id            String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at    DateTime  @default(now())
+  updated_at    DateTime? @db.Timestamptz(6)
+  user_id       String    @unique @db.Uuid
+  access_token  String
+  refresh_token String?
+  expiry_date   DateTime? @db.Timestamptz(6)
+  calendar_id   String?
+  user          User      @relation("UserGoogleCalendar", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("google_calendar_tokens")
+}
+
+model Organization {
+  id            String               @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at    DateTime             @default(now())
+  updated_at    DateTime?            @updatedAt @db.Timestamptz(6)
+  name          String
+  slug          String               @unique
+  owner_user_id String               @db.Uuid
+  description   String?
+  website       String?
+  address       String?
+  phone         String?
+  /// IANA timezone string for the clinic (e.g. "Europe/Berlin") — used for slot display
+  timezone      String?
+  /// Public logo image URL for the clinic/hospital brand
+  logo_url      String?
+  /// Organisation type — "clinic" | "hospital" | "private_practice"
+  org_type      String?
+  created_by_id String?              @map("created_by") @db.Uuid
+  updated_by_id String?              @map("updated_by") @db.Uuid
+  invoices      Invoice[]
+  members       OrganizationMember[]
+  created_by    User?                @relation("OrganizationCreatedBy", fields: [created_by_id], references: [id])
+  updated_by    User?                @relation("OrganizationUpdatedBy", fields: [updated_by_id], references: [id])
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id           String       @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  org_id       String       @db.Uuid
+  user_id      String       @db.Uuid
+  role         String
+  joined_at    DateTime     @default(now())
+  organization Organization @relation(fields: [org_id], references: [id], onDelete: Cascade)
+
+  @@unique([org_id, user_id])
+  @@map("organization_members")
+}
+
+model Invoice {
+  id                        String        @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at                DateTime      @default(now())
+  updated_at                DateTime?     @db.Timestamptz(6)
+  created_by_id             String?       @map("created_by") @db.Uuid
+  updated_by_id             String?       @map("updated_by") @db.Uuid
+  appointment_id            String?       @db.Uuid
+  user_id                   String        @db.Uuid
+  organization_id           String?       @db.Uuid
+  amount                    Int
+  currency                  String        @default("eur")
+  status                    String        @default("draft")
+  due_date                  DateTime?     @db.Date
+  paid_at                   DateTime?     @db.Timestamptz(6)
+  cancelled_at              DateTime?     @db.Timestamptz(6)
+  description               String?
+  /// * Frozen visit context when linked appointment is deleted — list/detail UI (REQ-0113).
+  visit_snapshot            Json?
+  visit_detached_at         DateTime?     @db.Timestamptz(6)
+  /// * Frozen actor when appointment hard-deleted — immutable audit (REQ-0114).
+  visit_detached_by_id      String?       @db.Uuid
+  visit_detached_by_display String?
+  visit_detached_by_email   String?
+  visit_detached_by_image   String?
+  visit_detached_by_role    String?
+  /// * Soft-delete tombstone — row stays for audit (REQ-0114).
+  deleted_at                DateTime?     @db.Timestamptz(6)
+  deleted_by_id             String?       @db.Uuid
+  deleted_by_display        String?
+  deleted_by_email          String?
+  deleted_by_image          String?
+  deleted_by_role           String?
+  appointment               Appointment?  @relation(fields: [appointment_id], references: [id])
+  created_by                User?         @relation("InvoiceCreatedBy", fields: [created_by_id], references: [id])
+  organization              Organization? @relation(fields: [organization_id], references: [id])
+  updated_by                User?         @relation("InvoiceUpdatedBy", fields: [updated_by_id], references: [id])
+  payments                  Payment[]
+
+  @@index([organization_id])
+  @@index([appointment_id])
+  @@map("invoices")
+}
+
+model Payment {
+  id                String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at        DateTime  @default(now())
+  invoice_id        String    @db.Uuid
+  stripe_payment_id String?
+  amount            Int
+  status            String
+  refunded_at       DateTime? @db.Timestamptz(6)
+  invoice           Invoice   @relation(fields: [invoice_id], references: [id], onDelete: Cascade)
+
+  @@map("payments")
+}
+
+model activities {
+  id           String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at   DateTime?   @default(now()) @db.Timestamptz(6)
+  created_by   String?     @db.Uuid
+  appointment  String      @db.Uuid
+  type         String
+  content      String
+  appointments Appointment @relation(fields: [appointment], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users        User?       @relation(fields: [created_by], references: [id], onUpdate: NoAction)
+
+  @@index([appointment], map: "idx_activities_appointment")
+}
+
+model relatives {
+  id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  created_at DateTime? @default(now()) @db.Timestamptz(6)
+  firstname  String
+  lastname   String
+  pronoun    String?
+  notes      String?
+}

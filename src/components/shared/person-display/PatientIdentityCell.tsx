@@ -1,0 +1,209 @@
+"use client";
+
+import { EntityTitleLink } from "@/components/shared/EntityTitleLink";
+import { PatientAgeGlassBadge } from "@/components/shared/person-display/PatientAgeGlassBadge";
+import { PatientCareTierGlassBadge } from "@/components/shared/person-display/PatientCareTierGlassBadge";
+import { PatientPortraitAvatar } from "@/components/shared/person-display/PatientPortraitAvatar";
+import {
+  clinicalIdentityCompactStackBadgeRowClass,
+  clinicalIdentityCompactStackNameEmailRowClass,
+  clinicalIdentityCompactStackRowClass,
+  clinicalIdentityCompactStackTextColClass,
+  clinicalIdentityInlineAvatarClass,
+  clinicalIdentityInlineBadgeRowClass,
+  clinicalIdentityInlineInnerClass,
+  clinicalIdentityInlineNameClass,
+  clinicalIdentityInlineRowClass,
+} from "@/lib/clinical-identity-inline-ui";
+import { patientAgeYears } from "@/lib/patient-age";
+import {
+  clinicalCellMutedTextClass,
+  clinicalStackGapClass,
+  clinicalTableCellMinRowClass,
+} from "@/lib/table-display-styles";
+import { cn } from "@/lib/utils";
+import type { Patient } from "@/types/types";
+
+type PatientPortraitInput = Pick<Patient, "id" | "email" | "clinical_profile" | "birth_date"> & {
+  firstname?: string;
+  lastname?: string;
+};
+
+type PatientIdentityCellProps = {
+  name: string;
+  email?: string | null;
+  /** Omit or set `linkPatient={false}` for read-only snapshot rows (portal doctor detail). */
+  href?: string;
+  linkPatient?: boolean;
+  patient: PatientPortraitInput;
+  /**
+   * `table` = avatar + stacked name/age + email;
+   * `detail` = name + email baseline row (no avatar);
+   * `inline` = avatar + name + age + email on one responsive wrap row;
+   * `compactStack` = avatar + row1 name/email + row2 age/care tier (CP invoice table).
+   */
+  layout?: "table" | "detail" | "inline" | "compactStack";
+  className?: string;
+  avatarSizeClassName?: string;
+  /** Inline layout — care tier badge beside age (entity detail Related People). */
+  careLevel?: number | null;
+  /**
+   * Table layout only — `withName` keeps age on the name row (patient list default);
+   * `belowEmail` stacks badges under email (org members / doctor specialty parity).
+   */
+  tableBadgePlacement?: "withName" | "belowEmail";
+};
+
+/**
+ * Reusable patient row for TanStack tables — name row matches appointment client picker
+ * (`PatientSelectOption` + `PatientAgeGlassBadge`); email stays on the line below.
+ */
+export function PatientIdentityCell({
+  name,
+  email,
+  href,
+  linkPatient = true,
+  patient,
+  layout = "table",
+  className,
+  avatarSizeClassName,
+  careLevel,
+  tableBadgePlacement = "withName",
+}: PatientIdentityCellProps) {
+  const resolvedAvatarSize =
+    avatarSizeClassName ??
+    (layout === "inline" ? clinicalIdentityInlineAvatarClass : "h-9 w-9");
+  const emailTrim = email?.trim();
+  const label = name.trim() || emailTrim || "—";
+  const age = patientAgeYears(patient.birth_date);
+  const canLink = linkPatient && Boolean(href?.trim());
+
+  const tableNameNode = canLink ? (
+    <EntityTitleLink href={href!} label={label} className="min-w-0 self-start truncate font-normal" />
+  ) : (
+    <span className="min-w-0 self-start truncate font-normal text-foreground">{label}</span>
+  );
+
+  const inlineNameNode = canLink ? (
+    <EntityTitleLink href={href!} label={label} className={clinicalIdentityInlineNameClass} />
+  ) : (
+    <span className={cn(clinicalIdentityInlineNameClass, "text-foreground")}>{label}</span>
+  );
+
+  const inlineBadgeRow =
+    age != null || careLevel != null ? (
+      <div className={clinicalIdentityInlineBadgeRowClass}>
+        {age != null ? <PatientAgeGlassBadge age={age} compact /> : null}
+        {careLevel != null ? (
+          <PatientCareTierGlassBadge careLevel={careLevel} compact className="shrink-0" />
+        ) : null}
+      </div>
+    ) : null;
+
+  if (layout === "inline") {
+    return (
+      <div className={cn(clinicalIdentityInlineRowClass, className)}>
+        <PatientPortraitAvatar patient={patient} sizeClassName={resolvedAvatarSize} />
+        <div className={clinicalIdentityInlineInnerClass}>
+          {inlineNameNode}
+          {emailTrim ? (
+            <span className={cn("shrink-0", clinicalCellMutedTextClass)} title={emailTrim}>
+              ({emailTrim})
+            </span>
+          ) : null}
+          {inlineBadgeRow}
+        </div>
+      </div>
+    );
+  }
+
+  if (layout === "compactStack") {
+    const compactNameNode = canLink ? (
+      <EntityTitleLink
+        href={href!}
+        label={label}
+        className="min-w-0 shrink truncate text-sm font-normal"
+      />
+    ) : (
+      <span className="min-w-0 shrink truncate text-sm font-normal text-foreground">{label}</span>
+    );
+
+    return (
+      <div className={cn(clinicalIdentityCompactStackRowClass, className)}>
+        <PatientPortraitAvatar patient={patient} sizeClassName={resolvedAvatarSize} />
+        <div className={clinicalIdentityCompactStackTextColClass}>
+          <div className={clinicalIdentityCompactStackNameEmailRowClass}>
+            {compactNameNode}
+            {emailTrim ? (
+              <span className={cn("shrink-0 text-xs", clinicalCellMutedTextClass)} title={emailTrim}>
+                ({emailTrim})
+              </span>
+            ) : null}
+          </div>
+          {inlineBadgeRow ? (
+            <div className={clinicalIdentityCompactStackBadgeRowClass}>{inlineBadgeRow}</div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  if (layout === "detail") {
+    return (
+      <div className={cn("flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5", className)}>
+        {canLink ? (
+          <EntityTitleLink href={href!} label={label} className="font-normal" />
+        ) : (
+          <span className="font-normal text-foreground">{label}</span>
+        )}
+        {emailTrim ? (
+          <span className={cn("truncate", clinicalCellMutedTextClass)} title={emailTrim}>
+            {emailTrim}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
+
+  const tableBadgeRow =
+    age != null || careLevel != null ? (
+      <div className={clinicalIdentityInlineBadgeRowClass}>
+        {age != null ? <PatientAgeGlassBadge age={age} compact /> : null}
+        {careLevel != null ? (
+          <PatientCareTierGlassBadge careLevel={careLevel} compact className="shrink-0" />
+        ) : null}
+      </div>
+    ) : null;
+
+  const stackBadgesBelowEmail = tableBadgePlacement === "belowEmail";
+
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 flex-row items-center gap-2",
+        clinicalTableCellMinRowClass,
+        className
+      )}
+    >
+      <PatientPortraitAvatar patient={patient} sizeClassName={resolvedAvatarSize} />
+      <div className={cn("flex min-w-0 flex-1 flex-col justify-center", clinicalStackGapClass)}>
+        {stackBadgesBelowEmail ? (
+          tableNameNode
+        ) : (
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {tableNameNode}
+            {age != null ? <PatientAgeGlassBadge age={age} /> : null}
+          </div>
+        )}
+        {emailTrim ? (
+          <span className={cn("truncate", clinicalCellMutedTextClass)} title={emailTrim}>
+            {emailTrim}
+          </span>
+        ) : (
+          <span className={clinicalCellMutedTextClass}>—</span>
+        )}
+        {stackBadgesBelowEmail ? tableBadgeRow : null}
+      </div>
+    </div>
+  );
+}

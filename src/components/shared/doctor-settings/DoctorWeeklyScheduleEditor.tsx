@@ -1,0 +1,547 @@
+"use client";
+
+/**
+ * Weekly DoctorAvailability CRUD — grouped by weekday, inline PATCH edit, shared CP + portal.
+ * Portal `layout="collapsible"`: native `<details>` per day + add-window (matches appointment dialog).
+ */
+
+import { useState, useRef, useMemo } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { CalendarDays, Check, Clock, Pencil, Plus, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { DoctorSettingsGlassInput } from "@/components/shared/doctor-settings/DoctorSettingsGlassInput";
+import { Input } from "@/components/ui/input";
+import { DoctorSettingsFieldLabel } from "@/components/shared/doctor-settings/DoctorSettingsFieldLabel";
+import { Skeleton } from "@/components/ui/skeleton";
+import { FilterSelect } from "@/components/shared/filters/FilterSelect";
+import {
+  findFilterOptionLabel,
+  weekdayFilterOptions,
+} from "@/lib/filter-select-option-presets";
+import { GlassCollapsibleDetails } from "@/components/shared/GlassCollapsibleDetails";
+import { GlassDoctorSettingsActionChip } from "@/components/shared/doctor-settings/GlassDoctorSettingsActionChip";
+import { DoctorSettingsSlotRow } from "@/components/shared/doctor-settings/DoctorSettingsSlotRow";
+import { DoctorSettingsSummaryHint } from "@/components/shared/doctor-settings/DoctorSettingsSummaryHint";
+import { DoctorSettingsFormActions } from "@/components/shared/doctor-settings/DoctorSettingsFormActions";
+import { closeHtmlDetails } from "@/components/shared/doctor-settings/close-html-details";
+import { apiClient } from "@/lib/api-client";
+import { queryKeys } from "@/lib/query-keys";
+import { useQueryBodyLoading } from "@/lib/query-body-loading";
+import { invalidateDoctorSchedule } from "@/lib/query-client";
+import { weeklyAvailabilityCrudMessage } from "@/lib/crud-notify-messages";
+import { notify } from "@/lib/notify";
+import type { DoctorAvailabilityQueryData } from "@/lib/doctor-portal-settings-prefetch";
+import type {
+  AvailabilityWindow,
+  DoctorSettingsEditorLayout,
+  DoctorSettingsVariant,
+} from "@/lib/doctor-schedule-types";
+import {
+  DEFAULT_DOCTOR_TIMEZONE,
+  WEEKDAY_LABELS,
+  formatWeekdayWindowsHint,
+  groupAvailabilityByWeekday,
+  minsToTime,
+  resolveBrowserTimezone,
+  sharedAvailabilityTimezone,
+  timeToMins,
+} from "@/lib/doctor-schedule-display";
+import {
+  WEEKLY_ADD_WINDOW_SUMMARY_LABEL,
+  WEEKLY_SAVE_WINDOW_LABEL,
+} from "@/lib/doctor-portal-schedule-copy";
+import { glassTimeInputClass } from "@/lib/scheduling-glass-input-classes";
+import { DoctorAvailabilityGroups } from "@/components/shared/doctor-display/DoctorAvailabilityGroups";
+import { useCanEditDoctorSettings } from "@/components/shared/doctor-settings/useCanEditDoctorSettings";
+import { doctorSettingsAddFormClass, doctorSettingsRowClass } from "@/components/shared/doctor-settings/doctor-settings-classes";
+import { doctorSettingsGlassSelectTriggerClass } from "@/lib/doctor-settings-glass-fields";
+import { isValidWeeklyAvailabilityWindow } from "@/lib/doctor-settings-form-validity";
+import { ConfirmActionDialog } from "@/components/shared/ConfirmActionDialog";
+import {
+  buildWeeklyHoursWindowDeleteConfirmSubtitle,
+  DELETE_WEEKLY_HOURS_WINDOW_CONFIRM_TITLE,
+} from "@/lib/confirm-delete-dialog-copy";
+import { cn, toTitleCaseLabel } from "@/lib/utils";
+
+const WEEKDAY_FILTER_OPTIONS = weekdayFilterOptions(WEEKDAY_LABELS);
+
+type Props = {
+  doctorId: string;
+  variant?: DoctorSettingsVariant;
+  layout?: DoctorSettingsEditorLayout;
+  showSummaryPreview?: boolean;
+  /** SSR seed — skips list skeleton on `/doctor-portal` refresh when provided. */
+  initialAvailability?: DoctorAvailabilityQueryData;
+};
+
+function resolveLayout(
+  variant: DoctorSettingsVariant,
+  layout: DoctorSettingsEditorLayout | undefined
+): DoctorSettingsEditorLayout {
+  if (layout) return layout;
+  return variant === "portal" ? "collapsible" : "flat";
+}
+
+export function DoctorWeeklyScheduleEditor({
+  doctorId,
+  variant = "control-panel",
+  layout: layoutProp,
+  showSummaryPreview = variant === "control-panel",
+  initialAvailability,
+}: Props) {
+  const layout = resolveLayout(variant, layoutProp);
+  const addDetailsRef = useRef<HTMLDetailsElement>(null);
+  const queryClient = useQueryClient();
+  const canEdit = useCanEditDoctorSettings(doctorId, {
+    portalSelfService: variant === "portal",
+  });
+
+  const { data: availData, isLoading: availLoading } = useQuery({
+    queryKey: queryKeys.doctors.availability(doctorId),
+    queryFn: () =>
+      apiClient<{ availability: AvailabilityWindow[] }>(
+        `/api/doctor-availability?doctorId=${encodeURIComponent(doctorId)}`
+      ),
+    initialData: initialAvailability,
+    staleTime: 60_000,
+  });
+  const windows = availData?.availability ?? [];
+  const grouped = groupAvailabilityByWeekday(windows);
+  const singleTz = sharedAvailabilityTimezone(windows);
+
+  const browserTz = resolveBrowserTimezone();
+  const [newWeekday, setNewWeekday] = useState("1");
+  const [newStartTime, setNewStartTime] = useState("09:00");
+  const [newEndTime, setNewEndTime] = useState("17:00");
+  const [newTz, setNewTz] = useState(browserTz);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  /** Glass confirm before DELETE — matches calendar appointment delete. */
+  const [deleteWindowId, setDeleteWindowId] = useState<string | null>(null);
+  const windowPendingDelete = deleteWindowId
+    ? (windows.find((w) => w.id === deleteWindowId) ?? null)
+    : null;
+  const [editWeekday, setEditWeekday] = useState("1");
+  const [editStartTime, setEditStartTime] = useState("09:00");
+  const [editEndTime, setEditEndTime] = useState("17:00");
+  const [editTz, setEditTz] = useState(browserTz);
+
+  const addWindowMutation = useMutation({
+    mutationFn: (data: { weekday: number; start_min: number; end_min: number; timezone: string }) =>
+      apiClient("/api/doctor-availability", {
+        method: "POST",
+        body: JSON.stringify({ doctorId, ...data }),
+      }),
+    onSuccess: async (_data, variables) => {
+      await invalidateDoctorSchedule(queryClient, doctorId);
+      notify.crud(weeklyAvailabilityCrudMessage("created", variables));
+      setNewStartTime("09:00");
+      setNewEndTime("17:00");
+      closeHtmlDetails(addDetailsRef.current);
+    },
+    onError: () =>
+      notify.error({ title: "Failed to add availability window", subtitle: "Please try again." }),
+  });
+
+  const patchWindowMutation = useMutation({
+    mutationFn: (vars: {
+      id: string;
+      weekday: number;
+      start_min: number;
+      end_min: number;
+      timezone: string;
+    }) => {
+      const { id, ...patch } = vars;
+      return apiClient(`/api/doctor-availability/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+    },
+    onSuccess: async (_data, variables) => {
+      await invalidateDoctorSchedule(queryClient, doctorId);
+      const { id: _id, ...window } = variables;
+      notify.crud(weeklyAvailabilityCrudMessage("updated", window));
+      setEditingId(null);
+    },
+    onError: () =>
+      notify.error({ title: "Failed to update window", subtitle: "Please try again." }),
+  });
+
+  const deleteWindowMutation = useMutation({
+    mutationFn: (id: string) =>
+      apiClient(`/api/doctor-availability/${id}`, { method: "DELETE" }),
+    onMutate: async (deletedId) => {
+      const deleted = windows.find((w) => w.id === deletedId) ?? null;
+      return { deleted };
+    },
+    onSuccess: async (_data, _id, context) => {
+      await invalidateDoctorSchedule(queryClient, doctorId);
+      if (context?.deleted) {
+        notify.crud(
+          weeklyAvailabilityCrudMessage("deleted", {
+            weekday: context.deleted.weekday,
+            start_min: context.deleted.start_min,
+            end_min: context.deleted.end_min,
+            timezone: context.deleted.timezone,
+          })
+        );
+      } else {
+        notify.crud({
+          action: "deleted",
+          entity: "Availability window",
+          detail: "Weekly time window removed.",
+        });
+      }
+      if (editingId) setEditingId(null);
+    },
+    onError: () =>
+      notify.error({ title: "Failed to delete availability window", subtitle: "Please try again." }),
+  });
+
+  function startEdit(w: AvailabilityWindow) {
+    setEditingId(w.id);
+    setEditWeekday(String(w.weekday));
+    setEditStartTime(minsToTime(w.start_min));
+    setEditEndTime(minsToTime(w.end_min));
+    setEditTz(w.timezone);
+  }
+
+  function handleAddWindow() {
+    const start_min = timeToMins(newStartTime);
+    const end_min = timeToMins(newEndTime);
+    if (start_min >= end_min) {
+      notify.error({
+        title: "Start time must be before end time",
+        subtitle: "Adjust the times and try again.",
+      });
+      return;
+    }
+    addWindowMutation.mutate({
+      weekday: Number(newWeekday),
+      start_min,
+      end_min,
+      timezone: newTz.trim() || browserTz,
+    });
+  }
+
+  function handleSaveEdit(id: string) {
+    const start_min = timeToMins(editStartTime);
+    const end_min = timeToMins(editEndTime);
+    if (start_min >= end_min) {
+      notify.error({
+        title: "Start time must be before end time",
+        subtitle: "Adjust the times and try again.",
+      });
+      return;
+    }
+    patchWindowMutation.mutate({
+      id,
+      weekday: Number(editWeekday),
+      start_min,
+      end_min,
+      timezone: editTz.trim() || browserTz,
+    });
+  }
+
+  /** List rows only — add-window chip stays mounted (inline skeleton pattern). */
+  const listBodyLoading = useQueryBodyLoading(
+    queryKeys.doctors.availability(doctorId),
+    availLoading
+  );
+  const busy =
+    addWindowMutation.isPending ||
+    patchWindowMutation.isPending ||
+    deleteWindowMutation.isPending;
+
+  const addWindowValid = useMemo(
+    () => isValidWeeklyAvailabilityWindow(newStartTime, newEndTime, newTz),
+    [newStartTime, newEndTime, newTz]
+  );
+
+  const editWindowValid = useMemo(
+    () => isValidWeeklyAvailabilityWindow(editStartTime, editEndTime, editTz),
+    [editStartTime, editEndTime, editTz]
+  );
+
+  function renderWindowRow(w: AvailabilityWindow, inCollapsible: boolean) {
+    if (editingId === w.id) {
+      return (
+        <div
+          key={w.id}
+          className="space-y-2 rounded-xl border border-sky-200 bg-sky-50/60 p-3"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <div className="space-y-1 col-span-2 sm:col-span-1">
+              <DoctorSettingsFieldLabel required>Day</DoctorSettingsFieldLabel>
+              <FilterSelect
+                value={editWeekday}
+                onValueChange={setEditWeekday}
+                displayLabel={findFilterOptionLabel(
+                  WEEKDAY_FILTER_OPTIONS,
+                  editWeekday,
+                  toTitleCaseLabel(WEEKDAY_LABELS[Number(editWeekday)] ?? "")
+                )}
+                size="toolbar"
+                triggerClassName={cn(doctorSettingsGlassSelectTriggerClass, "w-full")}
+                options={WEEKDAY_FILTER_OPTIONS}
+              />
+            </div>
+            <div className="space-y-1">
+              <DoctorSettingsFieldLabel required>Start</DoctorSettingsFieldLabel>
+              <Input
+                type="time"
+                value={editStartTime}
+                onChange={(e) => setEditStartTime(e.target.value)}
+                className={glassTimeInputClass}
+              />
+            </div>
+            <div className="space-y-1">
+              <DoctorSettingsFieldLabel required>End</DoctorSettingsFieldLabel>
+              <Input
+                type="time"
+                value={editEndTime}
+                onChange={(e) => setEditEndTime(e.target.value)}
+                className={glassTimeInputClass}
+              />
+            </div>
+            <div className="space-y-1 col-span-2 sm:col-span-1">
+              <DoctorSettingsFieldLabel required>Timezone</DoctorSettingsFieldLabel>
+              <DoctorSettingsGlassInput
+                tone="sky"
+                density="compact"
+                value={editTz}
+                onChange={(e) => setEditTz(e.target.value)}
+              />
+            </div>
+          </div>
+          <DoctorSettingsFormActions
+            tone="weekly"
+            pending={busy}
+            saveLabel="Save"
+            saveIcon={Check}
+            saveDisabled={!editWindowValid}
+            onSave={() => handleSaveEdit(w.id)}
+            onCancel={() => setEditingId(null)}
+          />
+        </div>
+      );
+    }
+
+    const rangeLabel = `${minsToTime(w.start_min)} – ${minsToTime(w.end_min)}`;
+    const actions = canEdit ? (
+      <>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-sky-700 hover:bg-sky-100"
+          onClick={() => startEdit(w)}
+          disabled={busy}
+          title={toTitleCaseLabel("Edit window")}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-red-500 hover:bg-red-50"
+          onClick={() => setDeleteWindowId(w.id)}
+          disabled={busy}
+          title={toTitleCaseLabel("Delete window")}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </>
+    ) : null;
+
+    if (inCollapsible) {
+      return (
+        <DoctorSettingsSlotRow key={w.id} icon={Clock} tone="sky" actions={actions}>
+          <span>
+            {rangeLabel}
+            {!singleTz ? (
+              <span className="ml-2 text-xs font-normal text-muted-foreground">{w.timezone}</span>
+            ) : null}
+          </span>
+        </DoctorSettingsSlotRow>
+      );
+    }
+
+    return (
+      <div key={w.id} className={doctorSettingsRowClass.weekly}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-gray-700">{rangeLabel}</span>
+          {!singleTz ? (
+            <span className="text-xs text-muted-foreground truncate">{w.timezone}</span>
+          ) : null}
+        </div>
+        {actions ? <div className="flex shrink-0 gap-0.5">{actions}</div> : null}
+      </div>
+    );
+  }
+
+  const addFormFields = (
+    <div className="space-y-3" onClick={(e) => e.stopPropagation()}>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="space-y-1 col-span-2 sm:col-span-1">
+          <DoctorSettingsFieldLabel required>Day</DoctorSettingsFieldLabel>
+            <FilterSelect
+              value={newWeekday}
+              onValueChange={setNewWeekday}
+              displayLabel={findFilterOptionLabel(
+                WEEKDAY_FILTER_OPTIONS,
+                newWeekday,
+                toTitleCaseLabel(WEEKDAY_LABELS[Number(newWeekday)] ?? "")
+              )}
+              size="toolbar"
+              triggerClassName={cn(doctorSettingsGlassSelectTriggerClass, "w-full")}
+              options={WEEKDAY_FILTER_OPTIONS}
+            />
+            </div>
+            <div className="space-y-1">
+              <DoctorSettingsFieldLabel required>Start</DoctorSettingsFieldLabel>
+              <Input
+                type="time"
+                value={newStartTime}
+            onChange={(e) => setNewStartTime(e.target.value)}
+            className={glassTimeInputClass}
+          />
+        </div>
+        <div className="space-y-1">
+          <DoctorSettingsFieldLabel required>End</DoctorSettingsFieldLabel>
+          <Input
+            type="time"
+            value={newEndTime}
+            onChange={(e) => setNewEndTime(e.target.value)}
+            className={glassTimeInputClass}
+          />
+        </div>
+        <div className="space-y-1 col-span-2 sm:col-span-1">
+          <DoctorSettingsFieldLabel required>Timezone (IANA)</DoctorSettingsFieldLabel>
+          <DoctorSettingsGlassInput
+            tone="sky"
+            density="compact"
+            value={newTz}
+            onChange={(e) => setNewTz(e.target.value)}
+            placeholder={DEFAULT_DOCTOR_TIMEZONE}
+          />
+        </div>
+      </div>
+      <DoctorSettingsFormActions
+        tone="weekly"
+        pending={addWindowMutation.isPending}
+        saveLabel={WEEKLY_SAVE_WINDOW_LABEL}
+        saveDisabled={!addWindowValid}
+        onSave={handleAddWindow}
+        onCancel={() => closeHtmlDetails(addDetailsRef.current)}
+      />
+    </div>
+  );
+
+  return (
+    <div className={cn("space-y-3", variant === "portal" && "text-gray-700")}>
+      {showSummaryPreview && layout === "flat" && !listBodyLoading && windows.length > 0 ? (
+        <DoctorAvailabilityGroups availabilities={windows} layout="stacked" className="mb-1" />
+      ) : null}
+
+      {layout === "flat" && singleTz ? (
+        <p className="text-[11px] text-muted-foreground">
+          {toTitleCaseLabel("All hours use timezone")}{" "}
+          <span className="font-medium text-gray-700">{singleTz}</span>
+        </p>
+      ) : null}
+
+      {listBodyLoading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full rounded-xl" />
+          ))}
+        </div>
+      ) : windows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {toTitleCaseLabel("No weekly hours configured yet.")}
+        </p>
+      ) : layout === "collapsible" ? (
+        <div className="space-y-2">
+          {grouped.map((group) => (
+            <GlassCollapsibleDetails
+              key={group.weekday}
+              tone="sky"
+              icon={CalendarDays}
+              title={toTitleCaseLabel(group.label)}
+              hint={
+                <DoctorSettingsSummaryHint tone="sky">
+                  {formatWeekdayWindowsHint(group.windows)}
+                </DoctorSettingsSummaryHint>
+              }
+            >
+              {group.windows.map((w) => renderWindowRow(w, true))}
+            </GlassCollapsibleDetails>
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {grouped.map((group) => (
+            <div key={group.weekday} className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-sky-800/80">
+                {toTitleCaseLabel(group.label)}
+              </p>
+              {group.windows.map((w) => renderWindowRow(w, false))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {canEdit ? (
+        layout === "collapsible" ? (
+          <GlassCollapsibleDetails
+            ref={addDetailsRef}
+            tone="sky"
+            summaryChip={
+              <GlassDoctorSettingsActionChip
+                tone="sky"
+                icon={Plus}
+                label={WEEKLY_ADD_WINDOW_SUMMARY_LABEL}
+                pending={addWindowMutation.isPending}
+              />
+            }
+            title=""
+          >
+            {addFormFields}
+          </GlassCollapsibleDetails>
+        ) : (
+          <div className={doctorSettingsAddFormClass.weekly}>
+            <p className="text-sm font-medium text-sky-700">
+              {toTitleCaseLabel("Add availability time window")}
+            </p>
+            {addFormFields}
+          </div>
+        )
+      ) : null}
+
+      <ConfirmActionDialog
+        open={Boolean(deleteWindowId && windowPendingDelete)}
+        onOpenChange={(open) => {
+          if (!open) setDeleteWindowId(null);
+        }}
+        variant="destructive"
+        title={DELETE_WEEKLY_HOURS_WINDOW_CONFIRM_TITLE}
+        subtitle={
+          windowPendingDelete
+            ? buildWeeklyHoursWindowDeleteConfirmSubtitle(windowPendingDelete)
+            : ""
+        }
+        confirmLabel="Delete"
+        confirmPendingLabel="Deleting…"
+        cancelLabel="Cancel"
+        confirmPending={deleteWindowMutation.isPending}
+        onConfirm={async () => {
+          if (deleteWindowId) {
+            await deleteWindowMutation.mutateAsync(deleteWindowId);
+          }
+          setDeleteWindowId(null);
+        }}
+      />
+    </div>
+  );
+}

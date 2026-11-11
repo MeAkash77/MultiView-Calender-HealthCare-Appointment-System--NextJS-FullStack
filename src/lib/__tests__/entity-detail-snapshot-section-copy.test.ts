@@ -1,0 +1,75 @@
+import { describe, expect, it } from "vitest";
+import { entityDetailOwnedSnapshotSectionTitle } from "@/lib/entity-detail-snapshot-section-copy";
+
+describe("entityDetailOwnedSnapshotSectionTitle", () => {
+  it("formats patient related appointments", () => {
+    expect(
+      entityDetailOwnedSnapshotSectionTitle("Demo Patient", "relatedAppointments", "patient")
+    ).toBe("Demo Patient's Related Appointments");
+  });
+
+  it("formats patient related invoices via appointments", () => {
+    expect(
+      entityDetailOwnedSnapshotSectionTitle(
+        "Demo Patient",
+        "relatedInvoicesViaAppointments",
+        "patient"
+      )
+    ).toBe("Demo Patient's Related Invoices (Via Appointments)");
+  });
+
+  it("formats category related appointments", () => {
+    expect(
+      entityDetailOwnedSnapshotSectionTitle(
+        "Pediatrics & Adolescent Care",
+        "relatedAppointments",
+        "category"
+      )
+    ).toBe("Pediatrics & Adolescent Care's Related Appointments");
+  });
+
+  it("formats doctor assigned patients", () => {
+    expect(
+      entityDetailOwnedSnapshotSectionTitle("Dr. Smith", "assignedPatients", "doctor")
+    ).toBe("Dr. Smith's Assigned Patients");
+  });
+
+  it("formats appointment related people and billing", () => {
+    expect(
+      entityDetailOwnedSnapshotSectionTitle(
+        "Demo curated visit",
+        "relatedPeople",
+        "appointment"
+      )
+    ).toBe("Demo curated visit's Related People");
+    expect(
+      entityDetailOwnedSnapshotSectionTitle(
+        "Demo curated visit",
+        "relatedBilling",
+        "appointment"
+      )
+    ).toBe("Demo curated visit's Related Billing");
+  });
+
+  it("formats invoice linked visit and payment history", () => {
+    expect(
+      entityDetailOwnedSnapshotSectionTitle(
+        "Demo curated — paid visit",
+        "linkedVisit",
+        "appointment"
+      )
+    ).toBe("Demo curated — paid visit's Linked Visit");
+    expect(
+      entityDetailOwnedSnapshotSectionTitle("Demo Patient", "paymentHistory", "patient")
+    ).toBe("Demo Patient's Payment History");
+  });
+
+  it("falls back to entity kind when name is blank or placeholder", () => {
+    expect(entityDetailOwnedSnapshotSectionTitle("—", "relatedAppointments", "patient")).toBe(
+      "Patient's Related Appointments"
+    );
+    expect(entityDetailOwnedSnapshotSectionTitle("", "relatedAppointments", "category")).toBe(
+      "Category's Related Appointments"
+    );
+  });
+});

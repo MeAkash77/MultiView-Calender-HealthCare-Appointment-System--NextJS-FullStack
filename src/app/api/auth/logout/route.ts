@@ -1,0 +1,28 @@
+/**
+ * Logout API Route
+ * 
+ * Handles user logout by clearing session.
+ * Replaces Supabase Auth logout functionality.
+ */
+
+import { NextResponse } from "next/server";
+import { clearSession } from "@/lib/session";
+
+/** Per-request API handler (see api-route-dynamic.test.ts). */
+export const dynamic = "force-dynamic";
+
+export async function POST() {
+  try {
+    // Clear session cookie
+    await clearSession();
+
+    return NextResponse.json({ message: "Logged out successfully" });
+  } catch (error: unknown) {
+    console.error("Logout error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Internal server error" },
+      { status: 500 }
+    );
+  }
+}
+

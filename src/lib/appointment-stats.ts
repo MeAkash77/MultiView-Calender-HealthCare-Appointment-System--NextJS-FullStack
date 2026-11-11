@@ -1,0 +1,184 @@
+"use client";
+
+import { isSameDay, startOfDay } from "date-fns";
+import type { FullAppointment } from "@/hooks/useAppointments";
+import { normalizeAppointmentStatus } from "@/lib/appointment-status-display";
+
+export type AppointmentSummaryStats = {
+  total: number;
+  today: number;
+  nextDay: number;
+  later: number;
+  passed: number;
+  open: number;
+  alert: number;
+  done: number;
+  cancelled: number;
+};
+
+/** Per-day / per-scope status buckets — pending→open; cancelled is separate (not open). */
+export type DailyAppointmentStats = {
+  total: number;
+  open: number;
+  alert: number;
+  done: number;
+  cancelled: number;
+};
+
+export function dateKey(input: Date): string {
+  const d = new Date(input);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
+export function summarizeAppointments(
+  appointments: FullAppointment[],
+  baseDate = new Date()
+): AppointmentSummaryStats {
+  const normalizedBase = new Date(baseDate);
+  normalizedBase.setHours(0, 0, 0, 0);
+
+  return appointments.reduce<AppointmentSummaryStats>(
+    (acc, appt) => {
+      const start = new Date(appt.start);
+      const startDay = new Date(start);
+      startDay.setHours(0, 0, 0, 0);
+      const dayDiff = Math.floor(
+        (startDay.getTime() - normalizedBase.getTime()) / (1000 * 60 * 60 * 24)
+      );
+
+      acc.total += 1;
+      if (dayDiff === 0 || isSameDay(startDay, normalizedBase)) acc.today += 1;
+      else if (dayDiff === 1) acc.nextDay += 1;
+      else if (dayDiff > 1) acc.later += 1;
+      else acc.passed += 1;
+
+      if (appt.status === "done") acc.done += 1;
+      else if (appt.status === "alert") acc.alert += 1;
+      else if (appt.status === "cancelled") acc.cancelled += 1;
+      else acc.open += 1;
+
+      return acc;
+    },
+    {
+      total: 0,
+      today: 0,
+      nextDay: 0,
+      later: 0,
+      passed: 0,
+      open: 0,
+      alert: 0,
+      done: 0,
+      cancelled: 0,
+    }
+  );
+}
+
+const EMPTY_DAY_STATS: DailyAppointmentStats = {
+  total: 0,
+  open: 0,
+  alert: 0,
+  done: 0,
+  cancelled: 0,
+};
+
+export function summarizeDayAppointments(
+  appointments: FullAppointment[]
+): DailyAppointmentStats {
+  return appointments.reduce<DailyAppointmentStats>(
+    (acc, appt) => {
+      acc.total += 1;
+      if (appt.status === "done") acc.done += 1;
+      else if (appt.status === "alert") acc.alert += 1;
+      else if (appt.status === "cancelled") acc.cancelled += 1;
+      else acc.open += 1;
+      return acc;
+    },
+    { ...EMPTY_DAY_STATS }
+  );
+}
+
+/** O(1) per-day status map from the warm appointments cache — keyed by `dateKey`. */
+export function buildDailyStatsMap(
+  appointments: FullAppointment[]
+): Record<string, DailyAppointmentStats> {
+  const grouped: Record<string, FullAppointment[]> = {};
+  for (const appt of appointments) {
+    const key = dateKey(new Date(appt.start));
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(appt);
+  }
+  const statsMap: Record<string, DailyAppointmentStats> = {};
+  for (const key of Object.keys(grouped)) {
+    statsMap[key] = summarizeDayAppointments(grouped[key]);
+  }
+  return statsMap;
+}
+
+type ResolveDayStatsInput = {
+  date: Date;
+  filteredDayAppts: FullAppointment[];
+  dailyStatsMap: Record<string, DailyAppointmentStats>;
+  /** When true (no active calendar filters), prefer cached map entry. */
+  preferCached: boolean;
+};
+
+/** Day headline stats — cached map when unfiltered, else filtered reduce. */
+export function resolveDayStatsForDate({
+  date,
+  filteredDayAppts,
+  dailyStatsMap,
+  preferCached,
+}: ResolveDayStatsInput): DailyAppointmentStats {
+  if (preferCached) {
+    return dailyStatsMap[dateKey(date)] ?? EMPTY_DAY_STATS;
+  }
+  return summarizeDayAppointments(filteredDayAppts);
+}
+
+/** Patient portal sidebar — status buckets aligned with timeline section badges. */
+export type PatientPortalSidebarSummary = {
+  total: number;
+  completed: number;
+  /** Open + alert on today or future — excludes cancelled/done and past active visits. */
+  upcoming: number;
+  /** All cancelled visits (today, passed, later). */
+  cancelled: number;
+};
+
+const EMPTY_PORTAL_SIDEBAR_SUMMARY: PatientPortalSidebarSummary = {
+  total: 0,
+  completed: 0,
+  upcoming: 0,
+  cancelled: 0,
+};
+
+export function summarizePatientPortalSidebar(
+  appointments: Array<{ start: string; status: string | null | undefined }>,
+  referenceDate = new Date()
+): PatientPortalSidebarSummary {
+  const refDay = startOfDay(referenceDate);
+
+  return appointments.reduce<PatientPortalSidebarSummary>(
+    (acc, appt) => {
+      acc.total += 1;
+      const status = normalizeAppointmentStatus(appt.status);
+      const start = new Date(appt.start);
+      const isTodayOrFuture = startOfDay(start).getTime() >= refDay.getTime();
+
+      if (status === "done") {
+        acc.completed += 1;
+        return acc;
+      }
+      if (status === "cancelled") {
+        acc.cancelled += 1;
+        return acc;
+      }
+      if ((status === "pending" || status === "alert") && isTodayOrFuture) {
+        acc.upcoming += 1;
+      }
+      return acc;
+    },
+    { ...EMPTY_PORTAL_SIDEBAR_SUMMARY }
+  );
+}

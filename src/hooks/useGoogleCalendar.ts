@@ -1,0 +1,192 @@
+import { useMemo } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiClient, handleApiError } from "@/lib/api-client";
+import { notify } from "@/lib/notify";
+import { queryKeys } from "@/lib/query-keys";
+import {
+  invalidateAfterAppointmentMutation,
+  invalidateGoogleCalendarAndCrossTab,
+} from "@/lib/query-client";
+import {
+  countUpcomingGoogleCalendarEvents,
+  sortGoogleCalendarEventsByStart,
+} from "@/lib/google-calendar-display";
+import type { GoogleCalendarStatus, GoogleCalendarBackfillSummary } from "@/types/google-calendar";
+import type { ApiError } from "@/types/api";
+import { clearGoogleCalendarOAuthBackfillGuard } from "@/lib/google-calendar-oauth-connect";
+
+export type { GoogleCalendarEvent, GoogleCalendarStatus } from "@/types/google-calendar";
+
+export function useGoogleCalendar({ enabled = true }: { enabled?: boolean } = {}) {
+  const queryClient = useQueryClient();
+  const statusKey = [...queryKeys.googleCalendar.root, "status"] as const;
+  const statusInitialData = queryClient.getQueryData<GoogleCalendarStatus>(statusKey);
+
+  const statusQuery = useQuery({
+    queryKey: statusKey,
+    queryFn: async () => {
+      try {
+        const data = await apiClient<{
+          events?: GoogleCalendarStatus["events"];
+          eventsFetchWarning?: GoogleCalendarStatus["eventsFetchWarning"];
+        }>("/api/calendar/sync");
+        return {
+          connected: true,
+          events: data.events || [],
+          eventsFetchWarning: data.eventsFetchWarning ?? null,
+        };
+      } catch (err: unknown) {
+        const status = (err as ApiError).statusCode;
+        // 404 = no token record (genuinely not connected).
+        // 401 = session expired (treat as not connected so UI reflects reality).
+        // Any other status (500, network) = transient — throw so TanStack Query retries
+        // and the UI keeps the last-known-good cached state instead of falsely
+        // flipping to "Not connected".
+        if (status === 404 || status === 401) {
+          return { connected: false, events: [], eventsFetchWarning: null };
+        }
+        throw err;
+      }
+    },
+    enabled,
+    initialData: statusInitialData,
+    // SSR seeds connected+empty without events — always client-refetch so preview shows loading not empty copy.
+    refetchOnMount: (query) => {
+      const data = query.state.data as GoogleCalendarStatus | undefined;
+      if (data === undefined) return true;
+      if (
+        data.connected &&
+        (data.events?.length ?? 0) === 0 &&
+        !data.eventsFetchWarning
+      ) {
+        return true;
+      }
+      return statusInitialData === undefined;
+    },
+    staleTime: 60_000,
+  });
+
+  const events = useMemo(
+    () => sortGoogleCalendarEventsByStart(statusQuery.data?.events ?? []),
+    [statusQuery.data?.events]
+  );
+
+  const eventCount = events.length;
+  const upcomingCount = useMemo(() => countUpcomingGoogleCalendarEvents(events), [events]);
+  const eventsFetchWarning = statusQuery.data?.eventsFetchWarning ?? null;
+
+  const backfillMutation = useMutation({
+    mutationFn: () =>
+      apiClient<{ backfill: GoogleCalendarBackfillSummary }>("/api/calendar/backfill", {
+        method: "POST",
+      }),
+    onSuccess: async (data) => {
+      const { synced, attempted } = data.backfill;
+      if (synced > 0) {
+        notify.crud({
+          action: "created",
+          entity: "Google Calendar sync",
+          detail: `${synced} existing appointment(s) were pushed to Google Calendar.`,
+        });
+      } else if (attempted > 0) {
+        notify.error({
+          title: "Google Calendar backfill incomplete",
+          subtitle: "Some appointments could not be synced. Try Sync to Google Calendar per visit.",
+        });
+      }
+      await invalidateGoogleCalendarAndCrossTab(queryClient);
+      if (synced > 0) {
+        await invalidateAfterAppointmentMutation(queryClient, { bustAllCategorySnapshots: false });
+      }
+    },
+    onError: (error) => handleApiError(error, "Failed to backfill appointments to Google Calendar"),
+  });
+
+  const syncMutation = useMutation({
+    mutationFn: (appointmentId: string) =>
+      apiClient("/api/calendar/sync", {
+        method: "POST",
+        body: JSON.stringify({ appointmentId }),
+      }),
+    onSuccess: async () => {
+      notify.crud({
+        action: "created",
+        entity: "Google Calendar sync",
+        detail: "Appointment changes are now mirrored in Google Calendar.",
+      });
+      await invalidateGoogleCalendarAndCrossTab(queryClient);
+    },
+    onError: (error) => handleApiError(error, "Failed to sync to Google Calendar"),
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: () => apiClient("/api/calendar/sync", { method: "DELETE" }),
+    onSuccess: async () => {
+      clearGoogleCalendarOAuthBackfillGuard();
+      notify.crud({
+        action: "deleted",
+        entity: "Google Calendar",
+        detail: "Calendar sync has been turned off.",
+      });
+      await invalidateGoogleCalendarAndCrossTab(queryClient);
+    },
+    onError: (error) => handleApiError(error, "Failed to disconnect Google Calendar"),
+  });
+
+  const importMutation = useMutation({
+    mutationFn: async ({ file, treatingPhysicianId }: { file: File; treatingPhysicianId?: string }) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (treatingPhysicianId) {
+        formData.append("treating_physician_id", treatingPhysicianId);
+      }
+      const response = await fetch("/api/calendar/import", {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) throw new Error("Import failed");
+      return response.json() as Promise<{ imported: number }>;
+    },
+    onSuccess: async (data) => {
+      notify.crud({
+        action: "imported",
+        entity: "Appointments",
+        detail: `${data.imported} appointment(s) were imported from your calendar file.`,
+      });
+      await invalidateAfterAppointmentMutation(queryClient, { bustAllCategorySnapshots: true });
+    },
+    onError: (error) => handleApiError(error, "Failed to import calendar"),
+  });
+
+  return {
+    isConnected: statusQuery.data?.connected ?? false,
+    events,
+    eventCount,
+    upcomingCount,
+    eventsFetchWarning,
+    isLoading: statusQuery.isLoading,
+    isFetching: statusQuery.isFetching,
+    isStatusPending:
+      statusQuery.isFetching ||
+      statusQuery.isLoading ||
+      statusQuery.fetchStatus === "fetching",
+    refreshStatus: () => statusQuery.refetch(),
+    backfillToGoogle: backfillMutation.mutate,
+    backfillToGoogleAsync: backfillMutation.mutateAsync,
+    isBackfilling: backfillMutation.isPending,
+    syncToGoogle: syncMutation.mutate,
+    isSyncing: syncMutation.isPending,
+    syncingAppointmentId:
+      syncMutation.isPending && syncMutation.variables ? syncMutation.variables : null,
+    disconnect: disconnectMutation.mutate,
+    disconnectAsync: disconnectMutation.mutateAsync,
+    isDisconnecting: disconnectMutation.isPending,
+    importICS: (file: File) => importMutation.mutate({ file }),
+    importICSWithDoctor: (file: File, treatingPhysicianId: string) =>
+      importMutation.mutate({ file, treatingPhysicianId }),
+    importICSWithDoctorAsync: (file: File, treatingPhysicianId: string) =>
+      importMutation.mutateAsync({ file, treatingPhysicianId }),
+    isImporting: importMutation.isPending,
+    exportUrl: "/api/calendar/export",
+  };
+}

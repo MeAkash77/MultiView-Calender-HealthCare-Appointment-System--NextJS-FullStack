@@ -1,0 +1,183 @@
+"use client";
+
+import { PatientIdentityCell } from "@/components/shared/person-display/PatientIdentityCell";
+import { DoctorIdentityCell } from "@/components/shared/person-display/DoctorIdentityCell";
+import { CategoryInlineLink } from "@/components/shared/CategoryInlineLink";
+import { InvoiceVisitSummaryLine } from "@/components/shared/billing/InvoiceVisitSummaryLine";
+import { InvoiceVisitTitleRow } from "@/components/shared/billing/InvoiceVisitTitleRow";
+import type { Invoice } from "@/hooks/usePayments";
+import { getInvoiceListTitle } from "@/lib/invoice-list-display";
+import {
+  resolveCalendarOwnerLinkKind,
+  resolveTreatingPhysicianLinkKind,
+} from "@/lib/entity-detail-snapshot-links";
+import {
+  invoiceCalendarOwnerDoctorFromSummary,
+  invoiceTreatingDoctorFromSummary,
+} from "@/lib/invoice-visit-doctor";
+import { invoiceVisitSummaryToPatientPortrait } from "@/lib/invoice-visit-patient-portrait";
+import {
+  patientDetailHref,
+  type EntityRole,
+} from "@/lib/entity-routes";
+import { resolveInvoiceVisitTitleHref } from "@/lib/invoice-visit-title-href";
+import {
+  clinicalCellMutedTextClass,
+  clinicalTableCellMinRowClass,
+  clinicalTableCellWrapClass,
+} from "@/lib/table-display-styles";
+import { cn } from "@/lib/utils";
+
+type Props = {
+  invoice: Invoice;
+  viewerRole: EntityRole;
+  /** Portal list cards — no table min-height / extra py. */
+  density?: "table" | "portal";
+};
+
+/**
+ * Shared invoice description column — title, schedule, labeled Patient / Treating /
+ * Category / Owner rows (appointment detail + portal billing list cards).
+ */
+export function InvoiceVisitDescriptionStack({
+  invoice,
+  viewerRole,
+  density = "table",
+}: Props) {
+  const portalDensity = density === "portal";
+  const summary = invoice.visit_summary;
+  const title = getInvoiceListTitle(invoice);
+  const href = resolveInvoiceVisitTitleHref(invoice, viewerRole);
+
+  const patientHref = summary?.patient_id
+    ? patientDetailHref(viewerRole, summary.patient_id)
+    : href;
+
+  const patientPortrait = invoiceVisitSummaryToPatientPortrait(summary);
+
+  const treatingDoctor = invoiceTreatingDoctorFromSummary(summary);
+  const ownerDoctor = invoiceCalendarOwnerDoctorFromSummary(summary);
+  const ownerLinkKind = summary
+    ? resolveCalendarOwnerLinkKind(viewerRole, summary.calendar_owner_role)
+    : "role";
+
+  return (
+    <div
+      className={cn(
+        !portalDensity && clinicalTableCellMinRowClass,
+        clinicalTableCellWrapClass,
+        "flex w-full min-w-0 flex-col justify-center",
+        portalDensity ? "gap-1 py-0" : "gap-1.5 py-1"
+      )}
+    >
+      <InvoiceVisitTitleRow
+        href={href}
+        title={title}
+        invoice={invoice}
+        wrapLabel
+        linkClassName={portalDensity ? "text-sm" : undefined}
+      />
+      <InvoiceVisitSummaryLine summary={summary} className="w-full min-w-0" />
+      {summary?.patient_label && patientPortrait ? (
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span
+            className={cn(
+              clinicalCellMutedTextClass,
+              "shrink-0 text-[10px] font-medium"
+            )}
+          >
+            Patient:
+          </span>
+          <PatientIdentityCell
+            href={patientHref}
+            name={summary.patient_label}
+            email={summary.patient_email}
+            patient={patientPortrait}
+            layout="inline"
+            avatarSizeClassName="h-7 w-7"
+            careLevel={summary.patient_care_level}
+            className="min-h-0 shrink py-0"
+          />
+        </div>
+      ) : null}
+      {treatingDoctor && summary?.treating_physician_id && summary.treating_physician_label ? (
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span
+            className={cn(
+              clinicalCellMutedTextClass,
+              "shrink-0 text-[10px] font-medium"
+            )}
+          >
+            Treating:
+          </span>
+          <DoctorIdentityCell
+            doctorId={summary.treating_physician_id}
+            name={summary.treating_physician_label}
+            email={summary.treating_physician_email}
+            image={summary.treating_physician_image}
+            specialty={summary.treating_physician_specialty}
+            viewerRole={viewerRole}
+            linkKind={resolveTreatingPhysicianLinkKind(
+              viewerRole,
+              undefined,
+              summary.treating_physician_role
+            )}
+            staffRole={summary.treating_physician_role}
+            layout="inline"
+            size="sm"
+            showRoleBadge
+            showSpecialty
+            className="min-h-0 shrink py-0"
+          />
+        </div>
+      ) : null}
+      {summary?.category_id && summary.category_label ? (
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span
+            className={cn(
+              clinicalCellMutedTextClass,
+              "shrink-0 text-[10px] font-medium"
+            )}
+          >
+            Category:
+          </span>
+          <CategoryInlineLink
+            categoryId={summary.category_id}
+            label={summary.category_label}
+            color={summary.category_color}
+            icon={summary.category_icon}
+            markSize="compact"
+            className="min-h-0 shrink py-0"
+          />
+        </div>
+      ) : null}
+      {ownerDoctor && summary?.calendar_owner_id && summary.calendar_owner_label ? (
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span
+            className={cn(
+              clinicalCellMutedTextClass,
+              "shrink-0 text-[10px] font-medium"
+            )}
+          >
+            Calendar owner:
+          </span>
+          <DoctorIdentityCell
+            doctorId={summary.calendar_owner_id}
+            name={summary.calendar_owner_label}
+            email={summary.calendar_owner_email}
+            image={summary.calendar_owner_image}
+            specialty={summary.calendar_owner_specialty}
+            viewerRole={viewerRole}
+            linkKind={ownerLinkKind}
+            staffRole={summary.calendar_owner_role}
+            layout="inline"
+            size="sm"
+            showRoleBadge
+            showSpecialty={summary.calendar_owner_role === "doctor"}
+            className="min-h-0 shrink py-0"
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
