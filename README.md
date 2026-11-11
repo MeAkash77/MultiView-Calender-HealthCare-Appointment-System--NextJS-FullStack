@@ -8,7 +8,7 @@
 
 A modern, full-featured calendar and appointment management web application built with Next.js, React, and PostgreSQL. Perfect for healthcare, clinics, and organizations needing robust scheduling, filtering, and client management with multiple calendar views, instant search, advanced filtering, and a clean, responsive UI.
 
-**Live Demo:** [https://doctor-patient-calendar-appointment.vercel.app/](https://doctor-patient-calendar-appointment.vercel.app/)
+**Live Demo:** [https://multi-view-calender-health-care-app.vercel.app/](https://multi-view-calender-health-care-app.vercel.app/)
 
 ![Screenshot 2025-06-26 at 17 07 38](https://github.com/user-attachments/assets/eedf5a4c-5cf9-4cea-bbd0-878660a9ab15)
 ![Screenshot 2025-06-26 at 17 09 03](https://github.com/user-attachments/assets/fe0ad75e-c74a-4a7a-8c47-30ef1cf577f2)
